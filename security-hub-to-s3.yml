@@ -66,6 +66,8 @@ Resources:
                           Body: Buffer.from(contents),
                           Bucket: bucket,
                           Key: key,
+                          ContentType: 'application/json',
+                          ContentEncoding: 'gzip',
                       }).promise();
                       console.log(`Stored new Security Hub finding: ${bucket}/${key}`);
                       console.log(finding);
