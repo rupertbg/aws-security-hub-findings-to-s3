@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Security Hub to S3 via CloudWatch Events
+
+Parameters:
+
+  DataBucket:
+    Type: String
+    Description: Bucket name where the Security Hub findings are to be stored
+
+Resources:
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.securityhub
+        detail-type:
+          - Security Hub Findings - Imported
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt Lambda.Arn
+          Id: !Ref Lambda
+
+  EventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref Lambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventRule.Arn
+
+  Lambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref AWS::StackName
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: nodejs10.x
+      Environment:
+        Variables:
+          DATA_BUCKET: !Ref DataBucket
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const util = require('util');
+          const zlib = require('zlib');
+          const gz = util.promisify(zlib.gzip);
+          exports.handler = async function (event, context) {
+              console.log("EVENT: \n" + JSON.stringify(event, null, 2))
+              if (event.detail && event.detail.findings) {
+                  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+                  const date = new Date();
+                  const year = date.getFullYear();
+                  const month = `0${date.getMonth()}`.slice(-2);
+                  const day = `0${date.getDate()}`.slice(-2);
+                  const findings = event.detail.findings;
+                  for (let i = 0; i < findings.length; i++) {
+                      const key = `SecurityHub/${region}/${year}/${month}/${day}/${event.time}-${event.id}-${i}.json.gz`;
+                      const finding = findings[i];
+                      var s3 = new AWS.S3();
+                      const contents = await gz(JSON.stringify(finding, null, 2));
+                      const result = await s3.putObject({
+                          Body: Buffer.from(contents),
+                          Bucket: process.env.DATA_BUCKET,
+                          Key: key,
+                      }).promise();
+                      console.log(`Stored new Security Hub finding in ${process.env.DATA_BUCKET}`);
+                      console.log(finding);
+                      console.log(result);
+                  }
+              }
+              else console.error('Invalid finding format')
+          }
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      Policies:
+      - PolicyName: !Sub ${AWS::StackName}-${AWS::Region}
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub arn:aws:s3:::${DataBucket}/*
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}*:log-stream:*
