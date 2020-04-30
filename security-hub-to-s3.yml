@@ -50,6 +50,7 @@ Resources:
           exports.handler = async function (event, context) {
               console.log("EVENT: \n" + JSON.stringify(event, null, 2))
               if (event.detail && event.detail.findings) {
+                  const bucket = process.env.DATA_BUCKET;
                   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
                   const date = new Date();
                   const year = date.getFullYear();
@@ -63,10 +64,10 @@ Resources:
                       const contents = await gz(JSON.stringify(finding, null, 2));
                       const result = await s3.putObject({
                           Body: Buffer.from(contents),
-                          Bucket: process.env.DATA_BUCKET,
+                          Bucket: bucket,
                           Key: key,
                       }).promise();
-                      console.log(`Stored new Security Hub finding in ${process.env.DATA_BUCKET}`);
+                      console.log(`Stored new Security Hub finding: ${bucket}/${key}`);
                       console.log(finding);
                       console.log(result);
                   }
