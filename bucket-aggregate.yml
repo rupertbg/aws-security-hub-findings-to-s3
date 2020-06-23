@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Security Hub S3 Aggregate Storage Bucket
+
+Resources:
+
+  AggregateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      VersioningConfiguration:
+        Status: Enabled
+  
+  AggregateBucketPolicy: 
+    Type: AWS::S3::BucketPolicy
+    Properties: 
+      Bucket: !Ref AggregateBucket
+      PolicyDocument: 
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref AWS::AccountId
+            Action:
+              - s3:GetBucketVersioning
+              - s3:PutBucketVersioning
+              - s3:ReplicateObject
+              - s3:ReplicateDelete
+            Resource:
+              - !Sub arn:aws:s3:::${AggregateBucket}
+              - !Sub arn:aws:s3:::${AggregateBucket}/*
+
+  ReplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+                Service: s3.amazonaws.com
+            Action: sts:AssumeRole
+
+  ReplicationPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Sub ${AWS::StackName}-${AWS::Region}-destination
+      Roles: 
+        - !Ref ReplicationRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:ReplicateObject
+              - s3:ReplicateDelete
+              - s3:ReplicateTags
+              - s3:GetObjectVersionTagging
+            Resource: !Sub arn:aws:s3:::${AggregateBucket}/*
+          - Action: kms:Encrypt
+            Effect: Allow
+            Condition:
+              StringLike:
+                kms:ViaService: !Sub s3.${AWS::Region}.amazonaws.com
+                kms:EncryptionContext:aws:s3:arn:
+                  - arn:aws:s3:::${AggregateBucket}/*
+            Resource: '*'
+
+Outputs:
+
+  AggregateBucket:
+    Value: !Ref AggregateBucket
+
+  ReplicationRole:
+    Value: !Ref ReplicationRole

@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Security Hub S3 Storage Bucket
+
+Parameters:
+
+  ReplicationRole:
+    Type: String
+    Description: Name of Replication Role that requires permissions to replicate this Bucket
+    Default: none
+
+  AggregateBucket:
+    Type: String
+    Description: Name of the aggregation bucket to replicate to
+    Default: none
+
+  DestinationRegion:
+    Type: String
+    Description: Region of the aggregation bucket to replicate to
+    Default: none
+
+Conditions:
+
+  UseReplication:
+    !Not
+      - !Equals
+          - !Ref ReplicationRole
+          - none
+
+Resources:
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      VersioningConfiguration:
+        Status: Enabled
+      ReplicationConfiguration:
+        !If
+          - UseReplication
+          - Role: !Sub arn:aws:iam::${AWS::AccountId}:role/${ReplicationRole}
+            Rules: 
+              - Destination: 
+                  Bucket: !Sub arn:aws:s3:::${AggregateBucket}
+                  EncryptionConfiguration:
+                    ReplicaKmsKeyID: !Sub arn:aws:kms:${DestinationRegion}:${AWS::AccountId}:alias/aws/s3
+                Prefix: ''
+                Status: Enabled
+                SourceSelectionCriteria:
+                  SseKmsEncryptedObjects: 
+                    Status: Enabled
+          - !Ref AWS::NoValue
+
+  ReplicationPolicy:
+    Condition: UseReplication
+    Type: AWS::IAM::Policy
+    Properties: 
+      PolicyName: !Sub ${AWS::StackName}-${AWS::Region}-source
+      Roles: 
+        - !Ref ReplicationRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObjectVersionForReplication
+              - s3:GetObjectVersionAcl
+            Resource:
+              - !Sub arn:aws:s3:::${DataBucket}/*
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetReplicationConfiguration
+            Resource:
+              - !Sub arn:aws:s3:::${DataBucket}
+          - Action: kms:Decrypt
+            Effect: Allow
+            Condition:
+              StringLike:
+                kms:ViaService: !Sub s3.${AWS::Region}.amazonaws.com
+                kms:EncryptionContext:aws:s3:arn:
+                  - arn:aws:s3:::${DataBucket}/*
+            Resource: '*'
+
+Outputs:
+
+  DataBucket:
+    Value: !Ref DataBucket
+
+  DataBucketArn:
+    Value: !GetAtt DataBucket.Arn
